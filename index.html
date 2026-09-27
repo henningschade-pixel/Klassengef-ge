@@ -378,6 +378,22 @@ document.addEventListener("click", e => {
   }
   if (!p.hidden && !e.target.closest("#infoPop")) closeInfoPop();
 });
+/* Aufklapp-Menüs (Raum, Schüler setzen, Filter, Score, Darstellung, Anordnung, Ausgabe, …) sollen sich wie
+   üblich auch durch einen Klick außerhalb schließen, nicht nur durch erneutes Anklicken ihres eigenen
+   Knopfs. Läuft in der Capture-Phase (letztes Argument true), damit noch die ursprünglich angeklickten
+   Elemente geprüft werden, bevor ein eigener Klick-Handler im Sitzplan/Soziogramm (z. B. „Tisch setzen“)
+   per Neu-Rendern die angeklickten Elemente aus dem DOM entfernt – sonst käme .closest(".fdrop") zu spät
+   und würde ein gerade erst geöffnetes Menü fälschlich offen lassen bzw. ein Klick außerhalb es gar nicht
+   erst schließen können. */
+function closeAllDrops() {
+  let changed = false;
+  for (const k of [...STUDENT_DROPS, ...SOCIO_DROPS, ...ROOM_DROPS]) if (ui[k]) { ui[k] = false; changed = true; }
+  return changed;
+}
+document.addEventListener("click", e => {
+  if (e.target.closest(".fdrop") || e.target.closest("#infoPop")) return;
+  if (closeAllDrops()) render();
+}, true);
 document.addEventListener("keydown", e => { if (e.key === "Escape") closeInfoPop(); });
 window.addEventListener("resize", closeInfoPop);
 window.addEventListener("scroll", closeInfoPop, true);
@@ -1640,11 +1656,13 @@ function nextChairDir(room, k, cur) {
   for (let i = 1; i <= order.length; i++) { const d = order[(from + i) % order.length]; if (chairSpotFree(room, k, d)) return d; }
   return cur;
 }
-/* Vorgabe-Blickrichtung für einen einzelnen Tisch ohne Rücksicht auf eine Tischgruppe: in der bevorzugten Reihenfolge (siehe chairDirOrder) */
+/* Vorgabe-Blickrichtung für einen einzelnen Tisch ohne Rücksicht auf eine Tischgruppe: in der bevorzugten Reihenfolge (siehe chairDirOrder).
+   null, wenn auf keiner Seite Platz für einen Stuhl ist (alle vier Nachbarfelder gesperrt oder belegt) – der
+   Aufrufer muss diesen Fall behandeln, statt eine ungültige Richtung zu erzwingen (siehe applyClusterDefault). */
 function fallbackChairDir(room, k) {
   const order = chairDirOrder(room, k);
   for (const d of order) if (chairSpotFree(room, k, d)) return d;
-  return order[order.length - 1];
+  return null;
 }
 /* Größe der zusammenhängenden Tischgruppe (auch unregelmäßig geformt), zu der Zelle k gehört */
 function clusterSize(room, k) {
@@ -1692,13 +1710,13 @@ function rectPairDirs(rect) {
 /* Setzt die Blickrichtung für einen neu gesetzten Tisch (Zelle k muss bereits in room.desks stehen): bildet seine Tischgruppe ein lückenloses Rechteck, gilt für genau zwei Tische (Doppeltisch, egal ob neben- oder hintereinander) – beide sollen in dieselbe Richtung schauen: nach Möglichkeit zur Tafel, sonst nach außen; geht keins von beiden für beide Tische zugleich, bleibt es bei der Einzel-Logik. Ab drei Tischen werden verpaarte Tische wie eine zusammengeschobene Gruppe ausgerichtet (bestehende, unverpaarte Nachbarn bleiben unangetastet); sonst gilt ebenfalls die Einzel-Logik */
 function applyClusterDefault(room, k) {
   const rect = blockRect(room, k);
-  if (!rect) { room.desks[k].dir = fallbackChairDir(room, k); return; }
+  if (!rect) { setDirOrDrop(room, k, fallbackChairDir(room, k)); return; }
   const cells = [];
   for (let r = rect.rMin; r <= rect.rMax; r++) for (let c = rect.cMin; c <= rect.cMax; c++) cells.push(dk(c, r));
   if (cells.length === 2) {
     const uniform = ["left", outDirFor(room, rect.rMin)].find(d => cells.every(ck => chairSpotFree(room, ck, d)));
     if (uniform) { for (const ck of cells) room.desks[ck].dir = uniform; return; }
-    room.desks[k].dir = fallbackChairDir(room, k);
+    setDirOrDrop(room, k, fallbackChairDir(room, k));
     return;
   }
   const dirs = rectPairDirs(rect);
@@ -1706,9 +1724,13 @@ function applyClusterDefault(room, k) {
     if (!room.desks[ck]) continue;
     const want = dirs[ck];
     if (want && chairSpotFree(room, ck, want)) room.desks[ck].dir = want;
-    else if (ck === k) room.desks[ck].dir = fallbackChairDir(room, ck);
+    else if (ck === k) setDirOrDrop(room, ck, fallbackChairDir(room, ck));
   }
 }
+/* Setzt die ermittelte Blickrichtung, oder entfernt den Tisch wieder, wenn keine (dir === null): ein Tisch
+   ohne freie Stuhlseite (rundum gesperrt oder von anderen Tischen umschlossen) darf nicht mit einem Stuhl
+   auf einem gesperrten Feld oder mitten in einem Nachbartisch stehen bleiben (siehe fallbackChairDir). */
+function setDirOrDrop(room, k, dir) { if (dir) room.desks[k].dir = dir; else delete room.desks[k]; }
 /* Wenn an Zelle k (neu gesetzter oder dorthin verschobener Tisch) jetzt ein Tisch steht, blockiert das eventuell den Sitzplatz eines Nachbartisches – dessen Stuhl rückt dann automatisch auf die nächste freie Seite */
 function fixBlockedNeighborChairs(room, k) {
   const p = dpos(k);
@@ -1865,12 +1887,25 @@ function applyStandardLayout(kind) {
     label = "U-Form";
     /* Offene Seite zeigt zur Tafel (Spalte 0 bleibt frei): rechte Tischspalte liegt bei cols-2, damit die
        Stühle (eine Spalte weiter, bei cols-1) noch ein echtes, freies Feld im Raum haben. Obere und untere
-       Tischreihe liegen entsprechend bei Reihe 1 bzw. rows-2, mit freier Stuhl-Reihe bei 0 bzw. rows-1. */
+       Tischreihe liegen entsprechend bei Reihe 1 bzw. rows-2, mit freier Stuhl-Reihe bei 0 bzw. rows-1.
+       Ist diese äußere Stuhl-Reihe/-Spalte gesperrt (z. B. eine ganz gesperrte Rand-Reihe für eine Wand),
+       schaut der Tisch stattdessen nach innen, damit der jeweilige Arm nicht komplett wegfällt – nur an den
+       Ecken (wo sich Arme sonst überschneiden würden) bleibt es bei „kein Platz“. */
     const rightCol = cols - 2, topRow = 1, botRow = rows - 2;
-    for (let r = topRow; r <= botRow; r++) if (free(rightCol, r) && free(rightCol + 1, r)) units.push([{ c: rightCol, r, dir: "left" }]);
+    for (let r = topRow; r <= botRow; r++) {
+      if (!free(rightCol, r)) continue;
+      if (free(rightCol + 1, r)) units.push([{ c: rightCol, r, dir: "left" }]);
+      else if (r > topRow && r < botRow && free(rightCol - 1, r)) units.push([{ c: rightCol, r, dir: "right" }]);
+    }
     for (let cc = 1; cc < rightCol; cc++) {
-      if (free(cc, topRow) && free(cc, topRow - 1)) units.push([{ c: cc, r: topRow, dir: "down" }]);
-      if (free(cc, botRow) && free(cc, botRow + 1)) units.push([{ c: cc, r: botRow, dir: "up" }]);
+      if (free(cc, topRow)) {
+        if (free(cc, topRow - 1)) units.push([{ c: cc, r: topRow, dir: "down" }]);
+        else if (topRow + 1 < botRow && free(cc, topRow + 1)) units.push([{ c: cc, r: topRow, dir: "up" }]);
+      }
+      if (free(cc, botRow)) {
+        if (free(cc, botRow + 1)) units.push([{ c: cc, r: botRow, dir: "up" }]);
+        else if (botRow - 1 > topRow && free(cc, botRow - 1)) units.push([{ c: cc, r: botRow, dir: "down" }]);
+      }
     }
   } else if (kind === "group") {
     label = "Gruppentische";
@@ -1891,8 +1926,15 @@ function applyStandardLayout(kind) {
   if (!n) { toast(cap === 0 ? "Es sind 0 Tische verfügbar – unter „Raum“ anpassen." : "Dafür ist das Raster zu klein."); return; }
   roomSnap();
   c.room.desks = desks;
-  if (kind === "group") { for (const k in desks) applyClusterDefault(c.room, k); for (const k in desks) fixBlockedNeighborChairs(c.room, k); }
+  if (kind === "group") {
+    for (const k in desks) applyClusterDefault(c.room, k);
+    for (const k in desks) fixBlockedNeighborChairs(c.room, k);
+    /* Tische ohne freie Stuhlseite (rundum durch gesperrte Felder oder Nachbartische eingeschlossen)
+       wurden dabei wieder entfernt – die tatsächliche Anzahl kann daher kleiner sein als n. */
+    n = Object.keys(c.room.desks).length;
+  }
   ui.deskSel = null; save(); renderRoom();
+  if (!n) { toast("Dafür ist bei diesem Raster kein Platz mit freier Stuhlseite übrig."); return; }
   toast(`${label} angelegt (${n} Tisch${n === 1 ? "" : "e"} im ${cols}×${rows}-Raster${cap != null ? `, begrenzt auf ${cap} verfügbare` : ""}). Rückgängig möglich.`);
 }
 
