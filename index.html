@@ -148,8 +148,10 @@ label.chk{display:flex;gap:8px;align-items:center;font-size:13.5px;padding:2px 0
 .desk.sel{outline:3px solid var(--accent);outline-offset:1px}
 .desk.rp{border-color:var(--pos);box-shadow:0 0 0 2px var(--pos)}
 .desk.rn{border-color:var(--neg);box-shadow:0 0 0 2px var(--neg)}
-.desk .lk{position:absolute;right:1px;top:1px;width:18px;height:18px;border:0;background:none;padding:1px;color:var(--ink2);opacity:.4}
-.desk.locked .lk,.desk:hover .lk{opacity:1}
+.desk .lk,.desk .rot{position:absolute;top:1px;width:18px;height:18px;border:0;background:none;padding:1px;color:var(--ink2);opacity:.4}
+.desk .lk{right:1px}
+.desk .rot{left:1px}
+.desk.locked .lk,.desk:hover .lk,.desk:hover .rot{opacity:1}
 .desk .pref{position:absolute;bottom:1px;width:15px;height:15px;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;line-height:1;pointer-events:none}
 .desk .pref.ok{right:1px;color:var(--pos)}
 .desk .pref.bad{right:1px;color:var(--neg)}
@@ -287,6 +289,7 @@ function initials(n) { const p = n.trim().split(/\s+/); return ((p[0] || "?")[0]
 const relText = v => v === 2 ? "starke Zuneigung" : v === 1 ? "Zuneigung" : v === -1 ? "Abneigung" : v === -2 ? "starke Abneigung" : "keine Angabe";
 const ICON_LOCK = '<svg class="ic" viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>';
 const ICON_OPEN = '<svg class="ic" viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 7.5-2"/></svg>';
+const ICON_ROTATE = '<svg class="ic" viewBox="0 0 24 24"><path d="M1 4v6h6"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>';
 
 function newRoom(cols = 8, rows = 5) { return { cols, rows, desks: {}, blocked: {} }; }
 function newClass(name) { return { id: uid(), name, students: [], rel: {}, pos: {}, room: newRoom(), roomPresets: [], seatingPresets: [], settings: defaultSettings() }; }
@@ -2030,15 +2033,16 @@ function renderRoom() {
     const s = d.sid ? stOf(c, d.sid) : null, dir = d.dir || "left";
     const prBad = s ? seatPrefBad(c, room, k) : null;
     const prHtml = prBad === null || !ui.showSeatOk ? "" : prBad.length ? `<span class="pref bad" title="Sitzplatzwunsch nicht erfüllt: ${esc(prBad.join(", "))}" aria-label="Sitzplatzwunsch nicht erfüllt">✕</span>` : `<span class="pref ok" title="Sitzplatzwunsch erfüllt" aria-label="Sitzplatzwunsch erfüllt">✓</span>`;
-    const seatHtml = !s && !d.locked
-      ? `<button type="button" class="seat add" data-deskadd="${k}" style="${SEAT_STYLE[OPP_DIR[dir]]}" title="Schüler manuell an diesen Tisch setzen" aria-label="Schüler manuell an diesen Tisch setzen">+</button>`
-      : `<span class="seat" style="${SEAT_STYLE[OPP_DIR[dir]]}" aria-hidden="true"></span>`;
-    cells += `<div class="cell" data-c="${q}" data-r="${r}" data-k="${k}"><div class="desk${s ? " has" : ""}${d.locked ? " locked" : ""}${dsel === k ? " sel" : ""} ${relCls[k] || ""}" data-desk="${k}" title="Tisch drehen (aktuell: ${DIR_LABEL[dir]})"${s && !d.locked ? ' draggable="true"' : ""}${s ? ` style="--gc:${GC[s.g]}"` : ""}>
+    const seatHtml = `<span class="seat" style="${SEAT_STYLE[OPP_DIR[dir]]}" aria-hidden="true"></span>`;
+    const deskTitle = !s && !d.locked ? "Schüler manuell an diesen Tisch setzen" : "";
+    const rotBtn = `<button class="rot" type="button" data-rot="${k}" aria-label="Tisch drehen" title="Tisch drehen (aktuell: ${DIR_LABEL[dir]})">${ICON_ROTATE}</button>`;
+    cells += `<div class="cell" data-c="${q}" data-r="${r}" data-k="${k}"><div class="desk${s ? " has" : ""}${d.locked ? " locked" : ""}${dsel === k ? " sel" : ""} ${relCls[k] || ""}" data-desk="${k}"${deskTitle ? ` title="${esc(deskTitle)}"` : ""}${s && !d.locked ? ' draggable="true"' : ""}${s ? ` style="--gc:${GC[s.g]}"` : ""}>
+      ${rotBtn}
       ${s ? `<span class="nm" title="${esc(s.name)} – Details anzeigen">${esc(short(s.name))}</span>${d.locked ? `<button class="lk" type="button" data-lock="${k}" aria-label="Platz entsperren" title="Platz entsperren">${ICON_LOCK}</button>` : `<button class="lk" type="button" data-lock="${k}" aria-label="Platz sperren" title="Platz sperren">${ICON_OPEN}</button>`}${prHtml}` : ""}</div>
       ${seatHtml}</div>`;
   }
   const roomToolbar = `<div class="socio-bar no-print">
-      ${info("Leeres Feld anklicken, um einen Tisch zu setzen; mit gedrückter linker Maustaste über mehrere leere Felder ziehen setzt gleich eine ganze Reihe. Auf einen Tisch klicken, versetzt den Stuhl von Hand auf die nächste freie Seite – Randlagen und schon besetzte Sitzplätze werden dabei übersprungen; der Kreis am Tischrand zeigt, wo der Stuhl steht, der Schüler blickt zur gegenüberliegenden Seite. Das kleine Plus-Symbol oben links auf einem leeren Tisch setzt von Hand einen Schüler aus den noch nicht platzierten aus – dort wird auch die Veränderung des Sitz-Scores je Schüler angezeigt. Auf den Namen eines sitzenden Schülers klicken zeigt Zufriedenheit, Sitzplatzwunsch und Beziehungen. Rechtsklick auf einen Tisch nimmt das zuletzt Hinzugefügte zurück (erst den Schüler, dann den Tisch); Rechtsklick auf ein leeres Feld sperrt es (rot schraffiert) bzw. entsperrt es wieder – gesperrte Felder bleiben bei Tischen und Standard-Tischanordnungen frei. Auch das geht mit gedrückter rechter Maustaste über mehrere Felder gezogen: Tische bzw. Schüler werden reihenweise entfernt, leere Felder reihenweise gesperrt oder entsperrt. Werden Tische direkt nebeneinander bzw. hintereinander gesetzt, richten sich ihre Stühle automatisch wie ein zusammengeschobener Doppel-, Vierer- oder Sechser-Tisch aus. Doppelklick sperrt/entsperrt einen besetzten Platz. Einen bereits sitzenden Schüler per Drag &amp; Drop irgendwohin ziehen: Der Tisch wandert mit – auf ein freies Feld verschiebt ihn dorthin, auf einen anderen Tisch tauschen beide samt Schülern die Plätze.")}
+      ${info("Leeres Feld anklicken, um einen Tisch zu setzen; mit gedrückter linker Maustaste über mehrere leere Felder ziehen setzt gleich eine ganze Reihe. Auf einen leeren Tisch klicken, setzt von Hand einen Schüler aus den noch nicht platzierten aus – dort wird auch die Veränderung des Sitz-Scores je Schüler angezeigt. Das Dreh-Symbol oben links auf einem Tisch versetzt den Stuhl von Hand auf die nächste freie Seite (auch bei einem schon besetzten Tisch) – Randlagen und schon besetzte Sitzplätze werden dabei übersprungen; der Kreis am Tischrand zeigt, wo der Stuhl steht, der Schüler blickt zur gegenüberliegenden Seite. Auf den Namen eines sitzenden Schülers klicken zeigt Zufriedenheit, Sitzplatzwunsch und Beziehungen. Rechtsklick auf einen Tisch nimmt das zuletzt Hinzugefügte zurück (erst den Schüler, dann den Tisch); Rechtsklick auf ein leeres Feld sperrt es (rot schraffiert) bzw. entsperrt es wieder – gesperrte Felder bleiben bei Tischen und Standard-Tischanordnungen frei. Auch das geht mit gedrückter rechter Maustaste über mehrere Felder gezogen: Tische bzw. Schüler werden reihenweise entfernt, leere Felder reihenweise gesperrt oder entsperrt. Werden Tische direkt nebeneinander bzw. hintereinander gesetzt, richten sich ihre Stühle automatisch wie ein zusammengeschobener Doppel-, Vierer- oder Sechser-Tisch aus. Doppelklick sperrt/entsperrt einen besetzten Platz. Einen bereits sitzenden Schüler per Drag &amp; Drop irgendwohin ziehen: Der Tisch wandert mit – auf ein freies Feld verschiebt ihn dorthin, auf einen anderen Tisch tauschen beide samt Schülern die Plätze.")}
       ${fdrop("rmRoomBtn", "Raum ▾", ui.roomRoomOpen, `
           <h4>Raumgröße</h4>
           <div class="row" style="align-items:flex-end">
@@ -2325,6 +2329,16 @@ tabRoom.addEventListener("click", async e => {
   const rs = t.closest("[data-rs]"); if (rs) { resize(rs.dataset.rs); return; }
   const rfon = t.closest("[data-rfon]"); if (rfon) { ui.roomRelOn[rfon.dataset.rfon] = !ui.roomRelOn[rfon.dataset.rfon]; renderRoom(); return; }
   const lk = t.closest("[data-lock]"); if (lk) { const d = room.desks[lk.dataset.lock]; d.locked = !d.locked; save(); renderRoom(); return; }
+  const rot = t.closest("[data-rot]");
+  if (rot) {
+    const k = rot.dataset.rot, d = room.desks[k];
+    if (d) {
+      const cur = d.dir || "left", next = nextChairDir(room, k, cur);
+      if (next === cur) { toast("Um diesen Tisch ist kein Platz für den Stuhl frei."); return; }
+      d.dir = next; save(); renderRoom();
+    }
+    return;
+  }
   if (t.closest("#rmRoomBtn")) { toggleDrop(ROOM_DROPS, "roomRoomOpen", renderRoom); return; }
   if (t.closest("#roomSizeApply")) { setRoomSize(+$("#roomLengthIn").value, +$("#roomWidthIn").value); return; }
   if (t.closest("#rmArrBtn")) { toggleDrop(ROOM_DROPS, "roomArrOpen", renderRoom); return; }
@@ -2348,8 +2362,6 @@ tabRoom.addEventListener("click", async e => {
   if (t.closest("#rmPrSvg")) { ui.roomPrintOpen = false; renderRoom(); exportRoom("svg"); return; }
   if (t.closest("#rmPrintBtn")) { toggleDrop(ROOM_DROPS, "roomPrintOpen", renderRoom); return; }
   if (t.closest("#roomFullBtn")) { toggleRoomFull(); return; }
-  const addBtn = t.closest("[data-deskadd]");
-  if (addBtn) { openDeskPickDialog(addBtn.dataset.deskadd); return; }
   const nm = t.closest(".nm");
   if (nm) {
     const nmDesk = nm.closest("[data-desk]");
@@ -2358,11 +2370,7 @@ tabRoom.addEventListener("click", async e => {
   const dk_ = t.closest("[data-desk]");
   if (dk_) {
     const k = dk_.dataset.desk, d = room.desks[k];
-    if (d) {
-      const cur = d.dir || "left", next = nextChairDir(room, k, cur);
-      if (next === cur) { toast("Um diesen Tisch ist kein Platz für den Stuhl frei."); return; }
-      d.dir = next; save(); renderRoom();
-    }
+    if (d && !d.sid && !d.locked) openDeskPickDialog(k);
     return;
   }
   const cellEl = t.closest(".cell");
@@ -2404,7 +2412,6 @@ tabRoom.addEventListener("click", async e => {
   }
 });
 tabRoom.addEventListener("dblclick", e => {
-  if (e.target.closest("[data-deskadd]")) return;
   const d = e.target.closest("[data-desk]"); if (!d) return;
   const desk = cls().room.desks[d.dataset.desk]; if (!desk || !desk.sid) return; desk.locked = !desk.locked; save(); renderRoom();
 });
