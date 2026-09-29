@@ -1003,7 +1003,19 @@ function detectRelGroups(c, students) {
   let groups = [...byC.values()].map(g => g.filter(id => belongsToGroup(id, g)));
   groups = groups.filter(g => g.length > 1).sort((a, b) => b.length - a.length);
   const groupOf = new Map(); groups.forEach((g, gi) => g.forEach(id => groupOf.set(id, gi)));
-  return { groups, groupOf };
+  return { groups, groupOf, labelOf: gi => "Gruppe " + (gi + 1) };
+}
+/* Gruppiert die übergebenen Schüler stattdessen nach einem einzelnen Merkmal (Geschlecht oder Jahrgang) –
+   im selben { groups, groupOf, labelOf }-Format wie detectRelGroups, damit Hülle, Beschriftung und
+   Anklicken (siehe drawSocio/selectGroup) unabhängig vom Kriterium denselben Code nutzen können. Wird
+   verwendet, wenn die aktuell gewählte Anordnung selbst nach diesem Merkmal gruppiert (siehe socioModel). */
+function detectCategoryGroups(students, keyOf, labelForKey) {
+  const byKey = new Map();
+  for (const s of students) { const k = keyOf(s); if (!byKey.has(k)) byKey.set(k, []); byKey.get(k).push(s.id); }
+  const entries = [...byKey.entries()].filter(([, ids]) => ids.length > 1).sort((a, b) => b[1].length - a[1].length);
+  const groups = entries.map(([, ids]) => ids);
+  const groupOf = new Map(); groups.forEach((g, gi) => g.forEach(id => groupOf.set(id, gi)));
+  return { groups, groupOf, labelOf: gi => labelForKey(entries[gi][0]) };
 }
 
 /* --- Modell: was ist bei den aktuellen Filtern sichtbar? --- */
@@ -1018,8 +1030,14 @@ function socioModel() {
     if (f.mutual && !(va && vb && Math.sign(va) === Math.sign(vb))) { va = 0; vb = 0; }
     if (va || vb) pairs.push({ a: a.id, b: b.id, va, vb });
   }
-  const { groups, groupOf } = detectRelGroups(c, active);
-  return { active, pairs, groups, groupOf };
+  /* Bei „Nach Geschlecht“/„Nach Jahrgang“ sollen genau die Cluster, nach denen auch räumlich angeordnet
+     wird (siehe arrangeClusters in runArrange), als anklickbare Gruppe mit Hülle erscheinen – nicht die
+     davon unabhängigen Beziehungsgruppen. Bei jeder anderen Anordnung bleibt es bei den Beziehungsgruppen. */
+  const mode = ui.layoutMode || "auto";
+  const { groups, groupOf, labelOf } = mode === "gender" ? detectCategoryGroups(active, s => s.g, g => GN[g])
+    : mode === "year" ? detectCategoryGroups(active, yk, y => y === "–" ? "Ohne Jahrgang" : "Jahrgang " + y)
+    : detectRelGroups(c, active);
+  return { active, pairs, groups, groupOf, labelOf };
 }
 
 /* --- Layout: Kräfte-Simulation mit mehreren Startpunkten, Kreuzungen minimieren --- */
@@ -1112,8 +1130,8 @@ const LAYOUTS = [
   { id: "auto", n: "Automatisch (Kräfte)", d: "Freunde rücken zusammen, Abgelehnte weg voneinander, möglichst wenige Kreuzungen." },
   { id: "circle", n: "Im Kreis (alle Schüler)", d: "Alle Schüler auf einem Kreis; Untergruppen liegen nebeneinander, Freunde möglichst dicht." },
   { id: "gcircle", n: "Gruppen im Kreis", d: "Jede Untergruppe als kleiner Ring; die Gruppen sind im großen Kreis verteilt." },
-  { id: "gender", n: "Nach Geschlecht", d: "Schüler nach Geschlecht in Ringen zusammengefasst." },
-  { id: "year", n: "Nach Jahrgang", d: "Schüler nach Jahrgang in Ringen zusammengefasst." }
+  { id: "gender", n: "Nach Geschlecht", d: "Schüler nach Geschlecht in Ringen zusammengefasst; jedes Geschlecht bildet dabei eine anklickbare Gruppe (Hülle)." },
+  { id: "year", n: "Nach Jahrgang", d: "Schüler nach Jahrgang in Ringen zusammengefasst; jeder Jahrgang bildet dabei eine anklickbare Gruppe (Hülle)." }
 ];
 function plOf(m, idx) {
   return m.pairs.map(p => ({ i: idx.get(p.a), j: idx.get(p.b), aw: (Math.max(p.va, 0) + Math.max(p.vb, 0)) * (p.va > 0 && p.vb > 0 ? 1.5 : 1), nw: Math.max(-p.va, 0) + Math.max(-p.vb, 0) }));
@@ -1286,9 +1304,10 @@ function drawSocio() {
     let d;
     if (pts.length === 2) d = `M${pts[0].x} ${pts[0].y}L${pts[1].x} ${pts[1].y}`;
     else d = "M" + hp.map(q => q.x.toFixed(1) + " " + q.y.toFixed(1)).join("L") + "Z";
-    hulls += `<path class="hull" data-group="${gi}" d="${d}" fill="${col}" stroke="${col}" stroke-width="74" stroke-linejoin="round" stroke-linecap="round"><title>Gruppe ${gi + 1} anklicken, um alle Mitglieder auszuwählen</title></path>`;
+    const label = m.labelOf(gi);
+    hulls += `<path class="hull" data-group="${gi}" d="${d}" fill="${col}" stroke="${col}" stroke-width="74" stroke-linejoin="round" stroke-linecap="round"><title>${esc(label)} anklicken, um alle Mitglieder auszuwählen</title></path>`;
     const top = Math.min(...pts.map(q => q.y)), mx = pts.reduce((s, q) => s + q.x, 0) / pts.length;
-    labels += `<text class="grouplabel" data-group="${gi}" x="${mx.toFixed(1)}" y="${(top - 40).toFixed(1)}" text-anchor="middle" style="font:600 11px var(--body);fill:${col};paint-order:stroke;stroke:var(--surface);stroke-width:3px;cursor:pointer">Gruppe ${gi + 1}</text>`;
+    labels += `<text class="grouplabel" data-group="${gi}" x="${mx.toFixed(1)}" y="${(top - 40).toFixed(1)}" text-anchor="middle" style="font:600 11px var(--body);fill:${col};paint-order:stroke;stroke:var(--surface);stroke-width:3px;cursor:pointer">${esc(label)}</text>`;
   });
   let edges = "";
   const ecls = v => (v > 0 ? "pos" : "neg") + Math.abs(v), dash = v => "", THIN = 1.7, THICK = 4.6;
@@ -1357,7 +1376,7 @@ function socioSide() {
   return `${ui.relUndo && ui.relUndo.length ? '<div class="row" style="margin-bottom:6px"><button class="btn sm" id="relUndoS" type="button">Letzte Beziehungs-Änderung rückgängig</button></div>' : ""}
     <div class="stat"><span>Sichtbare Schüler</span><b>${m.active.length} von ${c.students.length}</b></div>
     <div class="stat"><span>Gegenseitige Zuneigung</span><b>${st.mutual} Paare</b></div>
-    <div class="stat"><span>Erkannte Untergruppen</span><b>${m.groups.length}</b></div>
+    <div class="stat"><span>${ui.layoutMode === "gender" ? "Gruppen nach Geschlecht" : ui.layoutMode === "year" ? "Gruppen nach Jahrgang" : "Erkannte Untergruppen"}</span><b>${m.groups.length}</b></div>
     <h4>Meiste Zuneigung erhalten</h4>${fav.length ? `<div class="chips">${fav.map(s => `<button class="chip" type="button" data-sel="${s.id}">${esc(nameOf(c, s))} · ${st.rp[s.id]}×</button>`).join("")}</div>` : '<p class="small muted" style="margin:0">Niemand.</p>'}
     <h4>Meiste Abneigung erhalten</h4>${rej.length ? `<div class="chips">${rej.map(s => `<button class="chip" type="button" data-sel="${s.id}">${esc(nameOf(c, s))} · ${st.rn[s.id]}×</button>`).join("")}</div>` : '<p class="small muted" style="margin:0">Niemand.</p>'}
     <h4>Ohne erhaltene Zuneigung</h4>${isolated.length ? `<div class="chips">${isolated.map(s => nm(s.id)).join("")}</div>` : '<p class="small muted" style="margin:0">Niemand.</p>'}
