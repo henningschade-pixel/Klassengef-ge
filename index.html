@@ -239,7 +239,7 @@ function defaultSettings() {
 }
 const ui = {
   tab: "students",
-  sel: new Set(), hover: null, revealed: new Set(), socioFull: false, socioFiltOpen: false, socioDispOpen: false, socioLayoutOpen: false, socioPrintOpen: false, socioEvalOpen: false, roomEvalOpen: false, roomArrOpen: false, roomFiltOpen: false, roomPrintOpen: false, roomRoomOpen: false, roomFull: false, deskSel: null, stuAddOpen: false, stuAccOpen: false, stuPrintOpen: false,
+  sel: new Set(), hover: null, revealed: new Set(), socioFull: false, socioFiltOpen: false, socioDispOpen: false, socioLayoutOpen: false, socioPrintOpen: false, socioEvalOpen: false, socioMoodOpen: false, roomEvalOpen: false, roomArrOpen: false, roomFiltOpen: false, roomPrintOpen: false, roomRoomOpen: false, roomFull: false, deskSel: null, stuAddOpen: false, stuAccOpen: false, stuPrintOpen: false,
   socioUndo: null, roomUndo: [],
   ...defaultSettings()
 };
@@ -258,7 +258,7 @@ function syncUiToSettings(c) { if (!c) return; const s = ensureSettings(c); for 
 function syncSettingsToUi(c) { if (!c) return; const s = ensureSettings(c); for (const k of SETTINGS_KEYS) ui[k] = s[k]; }
 
 const STUDENT_DROPS = ["stuAddOpen", "stuAccOpen", "stuPrintOpen"];
-const SOCIO_DROPS = ["socioFiltOpen", "socioDispOpen", "socioLayoutOpen", "socioPrintOpen", "socioEvalOpen"];
+const SOCIO_DROPS = ["socioFiltOpen", "socioDispOpen", "socioLayoutOpen", "socioPrintOpen", "socioEvalOpen", "socioMoodOpen"];
 const ROOM_DROPS = ["roomArrOpen", "roomFiltOpen", "roomEvalOpen", "roomPrintOpen", "roomRoomOpen"];
 function closeDrops(group) { for (const k of group) ui[k] = false; }
 function toggleDrop(group, key, renderFn) {
@@ -1386,7 +1386,9 @@ function socioStats() {
     for (let i = 0; i < scope.length; i++) for (let j = i + 1; j < scope.length; j++) if (R(c, scope[i], scope[j]) > 0 && R(c, scope[j], scope[i]) > 0) sMutual++;
   }
   const avgRel = relVals.length ? relVals.reduce((s, v) => s + v, 0) / relVals.length : null;
-  return { rp, rn, mutual, scoped, scope, srp, srn, sMutual, avgRel, relCount: relVals.length };
+  const moodVals = scope.map(id => moodOf(c, id)).filter(v => v != null);
+  const moodAvg = moodVals.length ? moodVals.reduce((s, v) => s + v, 0) / moodVals.length : null;
+  return { rp, rn, mutual, scoped, scope, srp, srn, sMutual, avgRel, relCount: relVals.length, moodAvg, moodCount: moodVals.length };
 }
 function socioSide() {
   const c = cls(), m = ui.model, st = ui.stats;
@@ -1396,9 +1398,6 @@ function socioSide() {
   const suffix = st.scoped ? " (Auswahl)" : "";
   const isolated = pool.filter(s => rp[s.id] === 0), rej = pool.filter(s => rn[s.id] > 0).sort((a, b) => rn[b.id] - rn[a.id]).slice(0, 4);
   const fav = pool.filter(s => rp[s.id] > 0).sort((a, b) => rp[b.id] - rp[a.id]).slice(0, 4);
-  const moodAnswered = pool.filter(s => moodOf(c, s.id) != null);
-  const moodLow = moodAnswered.filter(s => moodOf(c, s.id) < 0).sort((a, b) => moodOf(c, a.id) - moodOf(c, b.id));
-  const moodAvg = moodAnswered.length ? moodAnswered.reduce((sum, s) => sum + moodOf(c, s.id), 0) / moodAnswered.length : null;
   let sel = "";
   const selArr = [...ui.sel].filter(id => stOf(c, id));
   if (selArr.length === 1) {
@@ -1427,9 +1426,30 @@ function socioSide() {
     <h4>Meiste Zuneigung erhalten${suffix}</h4>${fav.length ? `<div class="chips">${fav.map(s => `<button class="chip" type="button" data-sel="${s.id}">${esc(nameOf(c, s))} · ${rp[s.id]}×</button>`).join("")}</div>` : '<p class="small muted" style="margin:0">Niemand.</p>'}
     <h4>Meiste Abneigung erhalten${suffix}</h4>${rej.length ? `<div class="chips">${rej.map(s => `<button class="chip" type="button" data-sel="${s.id}">${esc(nameOf(c, s))} · ${rn[s.id]}×</button>`).join("")}</div>` : '<p class="small muted" style="margin:0">Niemand.</p>'}
     <h4>Ohne erhaltene Zuneigung${suffix}</h4>${isolated.length ? `<div class="chips">${isolated.map(s => nm(s.id)).join("")}</div>` : '<p class="small muted" style="margin:0">Niemand.</p>'}
-    ${moodAnswered.length ? `<h4>Wie geht es ${st.scoped ? "in der Auswahl" : "der Klasse"}?</h4><div class="stat"><span>Durchschnittliche Zufriedenheit</span><b>${moodAvg > 0 ? "+" : ""}${moodAvg.toFixed(1)} (${moodAnswered.length} von ${pool.length})</b></div><div class="chips">${MOOD_SCALE.map(k => { const n = moodAnswered.filter(s => moodOf(c, s.id) === k.v).length; return n ? `<span class="chip">${esc(k.t)} · ${n}</span>` : ""; }).join("")}</div>${moodLow.length ? `<p class="small" style="margin:6px 0 4px"><b>Könnten Aufmerksamkeit brauchen:</b></p><div class="chips">${moodLow.map(s => nm(s.id)).join("")}</div>` : ""}` : ""}
     ${sel}`;
 }
+/* --- Zufriedenheit: eigene Anzeige, analog zur Beziehungsanzeige oben (socioStats/socioSide) --- */
+function socioMoodPanel() {
+  const c = cls(), m = ui.model, st = ui.stats;
+  const nm = id => `<button class="chip" type="button" data-sel="${id}"><i class="gdot g-${stOf(c, id).g}"></i>${esc(nameOf(c, stOf(c, id)))}</button>`;
+  const pool = m.active.filter(s => st.srp.hasOwnProperty(s.id));
+  const suffix = st.scoped ? " (Auswahl)" : "";
+  const answered = pool.filter(s => moodOf(c, s.id) != null);
+  const unanswered = pool.filter(s => moodOf(c, s.id) == null);
+  const low = answered.filter(s => moodOf(c, s.id) < 0).sort((a, b) => moodOf(c, a.id) - moodOf(c, b.id));
+  const high = answered.filter(s => moodOf(c, s.id) > 0).sort((a, b) => moodOf(c, b.id) - moodOf(c, a.id)).slice(0, 4);
+  const avgTitle = st.scope.length === 1 ? `Zufriedenheit von ${esc(nameOf(c, stOf(c, st.scope[0])))}`
+    : st.scoped ? `Durchschnitt der Zufriedenheitsangaben der ${st.scope.length} ausgewählten Schüler`
+    : `Durchschnitt der Zufriedenheitsangaben der ganzen sichtbaren Klasse`;
+  return `<div class="stat"><span>${st.scoped ? "Ausgewählt" : "Sichtbare Schüler"}</span><b>${pool.length}${st.scoped ? " Schüler" : " von " + c.students.length}</b></div>
+    <div class="stat"><span>Ø Zufriedenheit${st.scoped && st.scope.length > 1 ? " in der Auswahl" : ""}</span><b class="${relScoreCls(st.moodAvg)}" title="${avgTitle}">${st.moodAvg != null ? fmtN(st.moodAvg, true) : "–"}</b></div>
+    <div class="stat"><span>Antworten</span><b>${answered.length} von ${pool.length}</b></div>
+    <div class="chips">${MOOD_SCALE.map(k => { const n = answered.filter(s => moodOf(c, s.id) === k.v).length; return n ? `<span class="chip">${esc(k.t)} · ${n}</span>` : ""; }).join("")}</div>
+    <h4>Am zufriedensten${suffix}</h4>${high.length ? `<div class="chips">${high.map(s => `<button class="chip" type="button" data-sel="${s.id}">${esc(nameOf(c, s))} · ${moodOf(c, s.id) > 0 ? "+" : ""}${moodOf(c, s.id)}</button>`).join("")}</div>` : '<p class="small muted" style="margin:0">Niemand.</p>'}
+    <h4>Könnten Aufmerksamkeit brauchen${suffix}</h4>${low.length ? `<div class="chips">${low.map(s => nm(s.id)).join("")}</div>` : '<p class="small muted" style="margin:0">Niemand.</p>'}
+    <h4>Noch keine Angabe${suffix}</h4>${unanswered.length ? `<div class="chips">${unanswered.map(s => nm(s.id)).join("")}</div>` : '<p class="small muted" style="margin:0">Niemand.</p>'}`;
+}
+function moodBtnLabel() { const st = ui.stats; return `Ø Zufriedenheit <b class="${relScoreCls(st.moodAvg)}">${st.moodAvg != null ? fmtN(st.moodAvg, true) : "–"}</b> ▾`; }
 
 function renderSocio() {
   const c = cls(), el = $("#tab-socio");
@@ -1463,6 +1483,7 @@ function renderSocio() {
         <label class="chk"><input type="checkbox" id="fsPop"${ui.f.sizeByPop ? " checked" : ""}> Größe = erhaltene Zuneigung</label>
       `)}
     ${fdrop("fsEvalBtnS", evalBtnLabel(), ui.socioEvalOpen, socioSide(), { panelId: "socioEvalPanel" })}
+    ${fdrop("fsMoodBtnS", moodBtnLabel(), ui.socioMoodOpen, socioMoodPanel(), { panelId: "socioMoodPanel" })}
     ${!ui.f.showName && ui.revealed.size ? `<button class="btn sm" data-hideall type="button">Alle aufgedeckten Namen ausblenden (${ui.revealed.size})</button>` : ""}
     ${ui.socioFull ? `<b style="margin-left:auto">${esc(c.name)}</b>` : ""}
   </div>`;
@@ -1495,6 +1516,8 @@ function refreshSide() {
   ui.stats = socioStats();
   const btn = $("#fsEvalBtnS"); if (btn) btn.innerHTML = evalBtnLabel();
   if (ui.socioEvalOpen) { const p = $("#socioEvalPanel"); if (p) p.innerHTML = socioSide(); }
+  const moodBtn = $("#fsMoodBtnS"); if (moodBtn) moodBtn.innerHTML = moodBtnLabel();
+  if (ui.socioMoodOpen) { const p2 = $("#socioMoodPanel"); if (p2) p2.innerHTML = socioMoodPanel(); }
 }
 
 const tabSocio = $("#tab-socio");
@@ -1519,6 +1542,7 @@ tabSocio.addEventListener("click", e => {
   else if (t.closest("#fsDispBtn")) { toggleDrop(SOCIO_DROPS, "socioDispOpen", renderSocio); }
   else if (t.closest("#fsPrintBtn")) { toggleDrop(SOCIO_DROPS, "socioPrintOpen", renderSocio); }
   else if (t.closest("#fsEvalBtnS")) { toggleDrop(SOCIO_DROPS, "socioEvalOpen", renderSocio); }
+  else if (t.closest("#fsMoodBtnS")) { toggleDrop(SOCIO_DROPS, "socioMoodOpen", renderSocio); }
 });
 tabSocio.addEventListener("change", e => {
   const f = ui.f, id = e.target.id;
