@@ -1343,19 +1343,33 @@ function drawSocio() {
 
 /* --- Seitenleiste --- */
 function socioStats() {
-  const c = cls(), m = ui.model, ids = m.active.map(s => s.id), rp = {}, rn = {}, pop = {};
+  const c = cls(), m = ui.model, ids = m.active.map(s => s.id), idSet = new Set(ids), rp = {}, rn = {}, pop = {};
   for (const s of c.students) { rp[s.id] = 0; rn[s.id] = 0; pop[s.id] = 0; }
   for (const a of ids) for (const b of ids) if (a !== b) { const v = R(c, a, b); if (v > 0) { rp[b]++; pop[b] += v; } else if (v < 0) rn[b]++; }
   ui.pop = pop;
   let mutual = 0; for (let i = 0; i < ids.length; i++) for (let j = i + 1; j < ids.length; j++) if (R(c, ids[i], ids[j]) > 0 && R(c, ids[j], ids[i]) > 0) mutual++;
-  return { rp, rn, mutual };
+  /* Ab zwei ausgewählten Schülern (einzeln markiert oder per Gruppenklick) bezieht sich die Auswertung
+     (Zuneigung/Abneigung erhalten, Zufriedenheit, Ø Beziehungswert …) nur noch auf die Auswahl und die
+     Beziehungen zwischen ihren Mitgliedern, statt weiterhin auf die ganze sichtbare Klasse – siehe
+     socioSide(). Die Knotengröße oben ("Größe = erhaltene Zuneigung", rp/pop) bleibt bewusst
+     unabhängig von der Auswahl, da sie das ganze Soziogramm einfärbt. */
+  const selIds = [...ui.sel].filter(id => idSet.has(id)), scoped = selIds.length >= 2, scope = scoped ? selIds : ids;
+  const srp = {}, srn = {}; let sMutual = 0; const relVals = [];
+  for (const id of scope) { srp[id] = 0; srn[id] = 0; }
+  for (const a of scope) for (const b of scope) if (a !== b) { const v = R(c, a, b); if (v > 0) srp[b]++; else if (v < 0) srn[b]++; if (v) relVals.push(v); }
+  for (let i = 0; i < scope.length; i++) for (let j = i + 1; j < scope.length; j++) if (R(c, scope[i], scope[j]) > 0 && R(c, scope[j], scope[i]) > 0) sMutual++;
+  const avgRel = relVals.length ? relVals.reduce((s, v) => s + v, 0) / relVals.length : null;
+  return { rp, rn, mutual, scoped, scope, srp, srn, sMutual, avgRel, relCount: relVals.length };
 }
 function socioSide() {
   const c = cls(), m = ui.model, st = ui.stats;
   const nm = id => `<button class="chip" type="button" data-sel="${id}"><i class="gdot g-${stOf(c, id).g}"></i>${esc(nameOf(c, stOf(c, id)))}</button>`;
-  const isolated = m.active.filter(s => st.rp[s.id] === 0), rej = m.active.filter(s => st.rn[s.id] > 0).sort((a, b) => st.rn[b.id] - st.rn[a.id]).slice(0, 4);
-  const fav = m.active.filter(s => st.rp[s.id] > 0).sort((a, b) => st.rp[b.id] - st.rp[a.id]).slice(0, 4);
-  const moodAnswered = m.active.filter(s => moodOf(c, s.id) != null);
+  const rp = st.scoped ? st.srp : st.rp, rn = st.scoped ? st.srn : st.rn;
+  const pool = st.scoped ? m.active.filter(s => st.srp.hasOwnProperty(s.id)) : m.active;
+  const suffix = st.scoped ? " (Auswahl)" : "";
+  const isolated = pool.filter(s => rp[s.id] === 0), rej = pool.filter(s => rn[s.id] > 0).sort((a, b) => rn[b.id] - rn[a.id]).slice(0, 4);
+  const fav = pool.filter(s => rp[s.id] > 0).sort((a, b) => rp[b.id] - rp[a.id]).slice(0, 4);
+  const moodAnswered = pool.filter(s => moodOf(c, s.id) != null);
   const moodLow = moodAnswered.filter(s => moodOf(c, s.id) < 0).sort((a, b) => moodOf(c, a.id) - moodOf(c, b.id));
   const moodAvg = moodAnswered.length ? moodAnswered.reduce((sum, s) => sum + moodOf(c, s.id), 0) / moodAnswered.length : null;
   let sel = "";
@@ -1373,14 +1387,17 @@ function socioSide() {
     sel = `<h4>Ausgewählt: ${names}</h4>
     <p class="small" style="margin:0"><b>Für alle relevant:</b> ${common.length ? common.map(id => esc(nameOf(c, stOf(c, id)))).join(", ") : "<span class=muted>niemand</span>"}</p>`;
   }
+  const avgRelRow = st.scoped ? `<div class="stat"><span>Ø Beziehungswert in der Auswahl</span><b class="${st.avgRel > 1e-9 ? "ok" : st.avgRel < -1e-9 ? "bad" : ""}" title="Durchschnitt aller (auch einseitigen) Beziehungsangaben zwischen den ${st.scope.length} ausgewählten Schülern">${st.avgRel != null ? fmtN(st.avgRel, true) : "–"}</b></div>` : "";
   return `${ui.relUndo && ui.relUndo.length ? '<div class="row" style="margin-bottom:6px"><button class="btn sm" id="relUndoS" type="button">Letzte Beziehungs-Änderung rückgängig</button></div>' : ""}
     <div class="stat"><span>Sichtbare Schüler</span><b>${m.active.length} von ${c.students.length}</b></div>
-    <div class="stat"><span>Gegenseitige Zuneigung</span><b>${st.mutual} Paare</b></div>
-    <div class="stat"><span>${ui.layoutMode === "gender" ? "Gruppen nach Geschlecht" : ui.layoutMode === "year" ? "Gruppen nach Jahrgang" : "Erkannte Untergruppen"}</span><b>${m.groups.length}</b></div>
-    <h4>Meiste Zuneigung erhalten</h4>${fav.length ? `<div class="chips">${fav.map(s => `<button class="chip" type="button" data-sel="${s.id}">${esc(nameOf(c, s))} · ${st.rp[s.id]}×</button>`).join("")}</div>` : '<p class="small muted" style="margin:0">Niemand.</p>'}
-    <h4>Meiste Abneigung erhalten</h4>${rej.length ? `<div class="chips">${rej.map(s => `<button class="chip" type="button" data-sel="${s.id}">${esc(nameOf(c, s))} · ${st.rn[s.id]}×</button>`).join("")}</div>` : '<p class="small muted" style="margin:0">Niemand.</p>'}
-    <h4>Ohne erhaltene Zuneigung</h4>${isolated.length ? `<div class="chips">${isolated.map(s => nm(s.id)).join("")}</div>` : '<p class="small muted" style="margin:0">Niemand.</p>'}
-    ${moodAnswered.length ? `<h4>Wie geht es der Klasse?</h4><div class="stat"><span>Durchschnittliche Zufriedenheit</span><b>${moodAvg > 0 ? "+" : ""}${moodAvg.toFixed(1)} (${moodAnswered.length} von ${m.active.length})</b></div><div class="chips">${MOOD_SCALE.map(k => { const n = moodAnswered.filter(s => moodOf(c, s.id) === k.v).length; return n ? `<span class="chip">${esc(k.t)} · ${n}</span>` : ""; }).join("")}</div>${moodLow.length ? `<p class="small" style="margin:6px 0 4px"><b>Könnten Aufmerksamkeit brauchen:</b></p><div class="chips">${moodLow.map(s => nm(s.id)).join("")}</div>` : ""}` : ""}
+    ${st.scoped ? `<div class="stat"><span>Ausgewählt</span><b>${st.scope.length} Schüler</b></div>` : ""}
+    <div class="stat"><span>Gegenseitige Zuneigung${suffix}</span><b>${(st.scoped ? st.sMutual : st.mutual)} Paare</b></div>
+    ${avgRelRow}
+    ${!st.scoped ? `<div class="stat"><span>${ui.layoutMode === "gender" ? "Gruppen nach Geschlecht" : ui.layoutMode === "year" ? "Gruppen nach Jahrgang" : "Erkannte Untergruppen"}</span><b>${m.groups.length}</b></div>` : ""}
+    <h4>Meiste Zuneigung erhalten${suffix}</h4>${fav.length ? `<div class="chips">${fav.map(s => `<button class="chip" type="button" data-sel="${s.id}">${esc(nameOf(c, s))} · ${rp[s.id]}×</button>`).join("")}</div>` : '<p class="small muted" style="margin:0">Niemand.</p>'}
+    <h4>Meiste Abneigung erhalten${suffix}</h4>${rej.length ? `<div class="chips">${rej.map(s => `<button class="chip" type="button" data-sel="${s.id}">${esc(nameOf(c, s))} · ${rn[s.id]}×</button>`).join("")}</div>` : '<p class="small muted" style="margin:0">Niemand.</p>'}
+    <h4>Ohne erhaltene Zuneigung${suffix}</h4>${isolated.length ? `<div class="chips">${isolated.map(s => nm(s.id)).join("")}</div>` : '<p class="small muted" style="margin:0">Niemand.</p>'}
+    ${moodAnswered.length ? `<h4>Wie geht es ${st.scoped ? "in der Auswahl" : "der Klasse"}?</h4><div class="stat"><span>Durchschnittliche Zufriedenheit</span><b>${moodAvg > 0 ? "+" : ""}${moodAvg.toFixed(1)} (${moodAnswered.length} von ${pool.length})</b></div><div class="chips">${MOOD_SCALE.map(k => { const n = moodAnswered.filter(s => moodOf(c, s.id) === k.v).length; return n ? `<span class="chip">${esc(k.t)} · ${n}</span>` : ""; }).join("")}</div>${moodLow.length ? `<p class="small" style="margin:6px 0 4px"><b>Könnten Aufmerksamkeit brauchen:</b></p><div class="chips">${moodLow.map(s => nm(s.id)).join("")}</div>` : ""}` : ""}
     ${sel}`;
 }
 
@@ -1439,7 +1456,7 @@ function toggleSocioFull(v) {
   document.body.style.overflow = ui.socioFull ? "hidden" : "";
   renderSocio();
 }
-function refreshSide() { if (ui.socioEvalOpen) { const p = $("#socioEvalPanel"); if (p) p.innerHTML = socioSide(); } }
+function refreshSide() { if (ui.socioEvalOpen) { ui.stats = socioStats(); const p = $("#socioEvalPanel"); if (p) p.innerHTML = socioSide(); } }
 
 const tabSocio = $("#tab-socio");
 tabSocio.addEventListener("click", e => {
