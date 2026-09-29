@@ -422,8 +422,23 @@ function askConfirm(title, text, ok = "OK") {
 }
 
 /* ---------- Datei speichern (Download mit Bestätigung) ---------- */
+/* Innerhalb von Claude läuft der Download über dessen eigene claude.use("downloads")-API (mit
+   Bestätigungsdialog). Als eigenständige, lokal geöffnete Datei (window.claude existiert dann nicht) gibt
+   es diese API nicht – dort läuft der Download stattdessen über einen normalen, unsichtbaren Download-Link,
+   wie ihn jeder Browser nativ unterstützt (auch von einer file://-Seite aus). */
 async function saveFile(filename, data) {
-  const dl = window.claude ? await claude.use("downloads") : null;
+  if (!window.claude) {
+    try {
+      const blob = data instanceof Blob ? data : new Blob([data], { type: "text/plain;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url; a.download = filename; a.style.display = "none";
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 2000);
+      return true;
+    } catch (e) { toast("Die Datei konnte nicht gespeichert werden."); return false; }
+  }
+  const dl = await claude.use("downloads");
   if (!dl) { toast("Datei-Download ist hier nicht verfügbar."); return false; }
   try { await dl.save({ filename, data }); return true; }
   catch (e) { if (!e || e.code !== "declined") toast("Die Datei konnte nicht gespeichert werden."); return false; }
@@ -494,7 +509,8 @@ async function openBackupDialog() {
   $("#bkLoad").onclick = () => imp($("#bkText").value);
   $("#bkFile").onchange = e => { const f = e.target.files[0]; if (!f) return; const fr = new FileReader(); fr.onload = () => imp(String(fr.result)); fr.readAsText(f); };
   $("#bkSave").onclick = async () => {
-    const dl = window.claude ? await claude.use("downloads") : null;
+    if (!window.claude) { if (await saveFile("klassengefuege-sicherung.json", json)) toast("Sicherung gespeichert."); return; }
+    const dl = await claude.use("downloads");
     if (!dl) { $("#bkText").value = json; toast("Datei-Download hier nicht verfügbar – der Inhalt steht im Textfeld zum Kopieren."); return; }
     try { await dl.save({ filename: "klassengefuege-sicherung.json", data: json }); toast("Sicherung gespeichert."); }
     catch (e) { if (e && e.code !== "declined") { $("#bkText").value = json; toast("Speichern nicht möglich – der Inhalt steht im Textfeld zum Kopieren."); } }
