@@ -1314,46 +1314,29 @@ function drawSocio() {
   const touches = p => multi ? (selSet.has(p.a) && selSet.has(p.b))
     : selArr.length ? (selArr.includes(p.a) || selArr.includes(p.b))
     : (focus === p.a || focus === p.b);
-  let hulls = "", labels = "", groupLines = "";
-  if (f.groups) {
-    const centroids = [];
-    m.groups.forEach((g, gi) => {
-      const pts = g.map(id => P(id)), col = HULL[gi % HULL.length], hp = hullPath(pts);
-      let d;
-      if (pts.length === 2) d = `M${pts[0].x} ${pts[0].y}L${pts[1].x} ${pts[1].y}`;
-      else d = "M" + hp.map(q => q.x.toFixed(1) + " " + q.y.toFixed(1)).join("L") + "Z";
-      const label = m.labelOf(gi);
-      hulls += `<path class="hull" data-group="${gi}" d="${d}" fill="${col}" stroke="${col}" stroke-width="74" stroke-linejoin="round" stroke-linecap="round"><title>${esc(label)} anklicken, um alle Mitglieder auszuwählen</title></path>`;
-      const top = Math.min(...pts.map(q => q.y)), mx = pts.reduce((s, q) => s + q.x, 0) / pts.length;
-      labels += `<text class="grouplabel" data-group="${gi}" x="${mx.toFixed(1)}" y="${(top - 40).toFixed(1)}" text-anchor="middle" style="font:600 11px var(--body);fill:${col};paint-order:stroke;stroke:var(--surface);stroke-width:3px;cursor:pointer">${esc(label)}</text>`;
-      centroids[gi] = { x: mx, y: pts.reduce((s, q) => s + q.y, 0) / pts.length };
-    });
-    if (f.groupConn && m.groups.length > 1) {
-      /* Fasst alle Beziehungen ZWISCHEN (nicht innerhalb) den erkannten Gruppen zu je einer Verbindungslinie
-         zwischen ihren Mittelpunkten zusammen – zeigt das große Bild zwischen den Untergruppen, unabhängig
-         von einer aktuellen Auswahl (die sonst nur einzelne Kanten aus-/einblendet, siehe touches()/dim unten). */
-      const gw = new Map();
-      for (const p of m.pairs) {
-        const gi = m.groupOf.has(p.a) ? m.groupOf.get(p.a) : -1, gj = m.groupOf.has(p.b) ? m.groupOf.get(p.b) : -1;
-        if (gi < 0 || gj < 0 || gi === gj) continue;
-        const key = Math.min(gi, gj) + "," + Math.max(gi, gj);
-        const o = gw.get(key) || { i: Math.min(gi, gj), j: Math.max(gi, gj), pos: 0, neg: 0 };
-        o.pos += Math.max(p.va, 0) + Math.max(p.vb, 0); o.neg += Math.max(-p.va, 0) + Math.max(-p.vb, 0);
-        gw.set(key, o);
-      }
-      for (const { i, j, pos, neg } of gw.values()) {
-        const net = pos - neg; if (!net) continue;
-        const k = (net > 0 ? "pos" : "neg") + (Math.abs(net) >= 6 ? "2" : "1");
-        const w = Math.min(10, 2 + Math.abs(net) * .5);
-        groupLines += `<path class="edge ${k}" d="${seg(centroids[i], centroids[j], 60, 60, 0, false)}" stroke-width="${w}" stroke-dasharray="2 7" opacity=".55"/>`;
-      }
-    }
-  }
+  let hulls = "", labels = "";
+  if (f.groups) m.groups.forEach((g, gi) => {
+    const pts = g.map(id => P(id)), col = HULL[gi % HULL.length], hp = hullPath(pts);
+    let d;
+    if (pts.length === 2) d = `M${pts[0].x} ${pts[0].y}L${pts[1].x} ${pts[1].y}`;
+    else d = "M" + hp.map(q => q.x.toFixed(1) + " " + q.y.toFixed(1)).join("L") + "Z";
+    const label = m.labelOf(gi);
+    hulls += `<path class="hull" data-group="${gi}" d="${d}" fill="${col}" stroke="${col}" stroke-width="74" stroke-linejoin="round" stroke-linecap="round"><title>${esc(label)} anklicken, um alle Mitglieder auszuwählen</title></path>`;
+    const top = Math.min(...pts.map(q => q.y)), mx = pts.reduce((s, q) => s + q.x, 0) / pts.length;
+    labels += `<text class="grouplabel" data-group="${gi}" x="${mx.toFixed(1)}" y="${(top - 40).toFixed(1)}" text-anchor="middle" style="font:600 11px var(--body);fill:${col};paint-order:stroke;stroke:var(--surface);stroke-width:3px;cursor:pointer">${esc(label)}</text>`;
+  });
   let edges = "";
   const ecls = v => (v > 0 ? "pos" : "neg") + Math.abs(v), dash = v => "", THIN = 1.7, THICK = 4.6;
   for (const p of m.pairs) {
     /* Sobald eine Auswahl besteht, werden nur die dazu passenden Beziehungen überhaupt gezeichnet – nicht nur ausgeblendet */
     if (selArr.length && !touches(p)) continue;
+    /* Werden Gruppen dargestellt, blendet das eine Gruppe verlassende bzw. eine andere Gruppe berührende
+       Verbindungen standardmäßig aus (nur Beziehungen INNERHALB derselben Gruppe bzw. ganz außerhalb jeder
+       Gruppe bleiben sichtbar) – "Verbindung zwischen Gruppen anzeigen" schaltet sie wieder ein. */
+    if (f.groups && !f.groupConn) {
+      const gi = m.groupOf.get(p.a), gj = m.groupOf.get(p.b);
+      if ((gi !== undefined || gj !== undefined) && gi !== gj) continue;
+    }
     const A = P(p.a), B = P(p.b), ra = nodeR(p.a), rb = nodeR(p.b), dim = active && !touches(p) ? " dim" : "";
     if (p.va && p.vb && Math.sign(p.va) === Math.sign(p.vb)) {
       // gegenseitig: eine dicke Linie mit Pfeilspitzen an beiden Enden, Farbe der stärkeren Angabe
@@ -1378,7 +1361,7 @@ function drawSocio() {
       ${below ? `<text class="node-name" text-anchor="middle" y="${r + 14}">${esc(below)}</text>` : ""}
       ${yr ? `<g transform="translate(${(r * .75).toFixed(1)} ${(-r * .75).toFixed(1)})"><rect x="${-bw / 2}" y="-8" width="${bw}" height="15" rx="7.5" fill="var(--surface)" stroke="var(--line)"/><text class="node-yr" style="stroke:none" text-anchor="middle" dy=".35em">${esc(yr)}</text></g>` : ""}</g>`;
   }
-  svg.innerHTML = `<defs>${["pos2", "pos1", "neg2", "neg1"].map(k => `<marker id="ar-${k}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="11" markerHeight="11" markerUnits="userSpaceOnUse" orient="auto-start-reverse"><path class="mk-${k}" d="M0 0L10 5L0 10z"/></marker>`).join("")}</defs>${hulls}${groupLines}${labels}${edges}${nodes}`;
+  svg.innerHTML = `<defs>${["pos2", "pos1", "neg2", "neg1"].map(k => `<marker id="ar-${k}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="11" markerHeight="11" markerUnits="userSpaceOnUse" orient="auto-start-reverse"><path class="mk-${k}" d="M0 0L10 5L0 10z"/></marker>`).join("")}</defs>${hulls}${labels}${edges}${nodes}`;
 }
 
 /* --- Seitenleiste --- */
