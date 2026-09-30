@@ -1152,13 +1152,50 @@ const LAYOUTS = [
 function plOf(m, idx) {
   return m.pairs.map(p => ({ i: idx.get(p.a), j: idx.get(p.b), aw: (Math.max(p.va, 0) + Math.max(p.vb, 0)) * (p.va > 0 && p.vb > 0 ? 1.5 : 1), nw: Math.max(-p.va, 0) + Math.max(-p.vb, 0) }));
 }
-/* Reihenfolge auf einem Ring: Beziehungen nah beieinander, Abneigungen gegenüber (Tausch-Suche mit mehreren Startvarianten) */
+/* Schlanker Fenwick-/BIT-Baum über Positionen 0..n-1, nur für countCrossings unten. */
+function makeFenwick(n) {
+  const t = new Array(n + 1).fill(0);
+  return {
+    add(i, d) { for (i++; i <= n; i += i & -i) t[i] += d; },
+    sum(i) { if (i < 0) return 0; let s = 0; for (i++; i > 0; i -= i & -i) s += t[i]; return s; },
+    range(l, r) { return r < l ? 0 : this.sum(r) - this.sum(l - 1); }
+  };
+}
+/* Zählt, wie viele der Verbindungen (pl, mit Positionen aus slot) sich auf dem Ring kreuzen würden – in
+   O(pl·log n) statt naiv O(pl²): Sehnen als (lo,hi)-Intervall aufgefasst, nach lo sortiert durchlaufen;
+   für jede Sehne zählt die Anzahl bereits eingetragener hi-Werte STRENG zwischen lo und hi (Fenwick-Baum)
+   genau die mit ihr kreuzenden, früher verarbeiteten Sehnen. Sehnen mit gemeinsamem Endpunkt (= gemeinsamer
+   Schüler) kreuzen sich per Definition nicht und fallen wegen der strengen Ungleichungen automatisch heraus,
+   da ein gemeinsamer Endpunkt immer einen der vier Intervallränder exakt trifft. Sehnen mit gleichem lo
+   werden als Gruppe erst komplett abgefragt und danach erst eingetragen, damit sie sich nicht gegenseitig
+   fälschlich als Kreuzung zählen. */
+function countCrossings(pl, slot) {
+  const n = slot.length;
+  const chords = pl.map(p => { const a = slot[p.i], b = slot[p.j]; return a < b ? [a, b] : [b, a]; }).sort((x, y) => x[0] - y[0]);
+  const bit = makeFenwick(n);
+  let total = 0, k = 0;
+  while (k < chords.length) {
+    let k2 = k;
+    while (k2 < chords.length && chords[k2][0] === chords[k][0]) k2++;
+    for (let idx = k; idx < k2; idx++) { const [lo, hi] = chords[idx]; total += bit.range(lo + 1, hi - 1); }
+    for (let idx = k; idx < k2; idx++) bit.add(chords[idx][1], 1);
+    k = k2;
+  }
+  return total;
+}
+/* Reihenfolge auf einem Ring: in erster Linie möglichst wenige sich kreuzende Verbindungslinien (entsprechend
+   der aktuell sichtbaren, gefilterten Beziehungen in pl – siehe plOf/m.pairs), bei Gleichstand zusätzlich
+   Zuneigung nah beieinander und Abneigung gegenüber (Tausch-Suche mit mehreren Startvarianten). */
 function ringOrder(n, pl, init, seed) {
   if (n <= 3) return init.slice();
   const r = rng(seed), cd = (a, b) => { const d = Math.abs(a - b); return Math.min(d, n - d); };
-  const cost = slot => { let s = 0; for (const p of pl) { const d = cd(slot[p.i], slot[p.j]); if (p.aw > 0) s += p.aw * d; if (p.nw > 0) s -= p.nw * Math.min(d, n / 2) * .6; } return s; };
+  const distCost = slot => { let s = 0; for (const p of pl) { const d = cd(slot[p.i], slot[p.j]); if (p.aw > 0) s += p.aw * d; if (p.nw > 0) s -= p.nw * Math.min(d, n / 2) * .6; } return s; };
+  const cost = slot => countCrossings(pl, slot) * 1e6 + distCost(slot);
+  /* Weniger Startvarianten für sehr große/dichte Klassen, damit eine einzelne Anordnung nicht mehrere Sekunden
+     blockiert – zusätzliche Neustarts bringen bei so vielen Kanten ohnehin kaum noch Verbesserung. */
+  const load = n * pl.length, restarts = load > 15000 ? 3 : load > 6000 ? 5 : 8;
   let best = null, bc = Infinity;
-  for (let rs = 0; rs < 8; rs++) {
+  for (let rs = 0; rs < restarts; rs++) {
     const order = init.slice();
     for (let k = 0; k < rs * 2; k++) { const a = Math.floor(r() * n), b = Math.floor(r() * n); [order[a], order[b]] = [order[b], order[a]]; }
     const slot = new Array(n); order.forEach((v, i) => slot[v] = i);
